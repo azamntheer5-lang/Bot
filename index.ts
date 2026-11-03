@@ -528,6 +528,55 @@ async function handle(req: Request): Promise<Response> {
     return ok({ messages: listMessages() });
   }
 
+  // ── الصفحة الجذرية — صفحة حالة حية (HTTP 200 دائماً) لأدوات المراقبة والمتصفح ──
+  if (path === "/" && method === "GET") {
+    const h = healthPayload();
+    const p = posterStatus();
+    const t = getSetting<TargetInfo | null>("target", null);
+    const connected = h.loggedIn;
+    const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>🤖 بوت أم رهام — الحالة</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:system-ui,'Segoe UI',Tahoma,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:16px}
+  .card{background:#1e293b;border-radius:18px;padding:28px;max-width:430px;width:100%;box-shadow:0 12px 45px rgba(0,0,0,.45);border:1px solid #334155}
+  h1{margin:0 0 4px;font-size:21px}
+  .sub{color:#94a3b8;font-size:13px;margin-bottom:18px}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px dashed #334155;font-size:14px;gap:12px}
+  .row:last-child{border-bottom:none}
+  .k{color:#94a3b8}
+  .ok{color:#4ade80;font-weight:700}
+  .wait{color:#fbbf24;font-weight:700}
+  .off{color:#f87171;font-weight:700}
+  .num{direction:ltr}
+  .foot{margin-top:16px;color:#64748b;font-size:11px;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🤖 بوت أم رهام</h1>
+  <div class="sub">خدمات طلابية متكاملة — um-raham-bot</div>
+  <div class="row"><span class="k">حالة الخدمة</span><span class="ok">تعمل ✓</span></div>
+  <div class="row"><span class="k">الاتصال بتيليجرام</span>${connected ? '<span class="ok">متصل ✓</span>' : '<span class="wait">بانتظار الاتصال…</span>'}</div>
+  <div class="row"><span class="k">الرقم</span><span class="num">${h.phone || "—"}</span></div>
+  <div class="row"><span class="k">القناة</span><span>${t ? t.title : "—"}</span></div>
+  <div class="row"><span class="k">الناشر التلقائي</span>${p.running ? '<span class="ok">يعمل ✓</span>' : '<span class="off">متوقف</span>'}</div>
+  <div class="row"><span class="k">رسائل اليوم</span><span>${p.todayCount} / ${p.dailyLimit}</span></div>
+  <div class="row"><span class="k">إجمالي المنشور</span><span>${p.totalPosted}</span></div>
+  <div class="foot">تُحدَّث الصفحة تلقائياً كل 30 ثانية · الحالة الصحية: /api/health</div>
+</div>
+</body>
+</html>`;
+    return new Response(html, {
+      headers: { "Content-Type": "text/html; charset=utf-8", ...CORS },
+    });
+  }
+
   return fail(new Error(`مسار غير معروف: ${method} ${path}`), 404);
 }
 
