@@ -190,9 +190,11 @@ export async function boot(): Promise<void> {
     } catch (e) {
       await killClient();
       const raw = String((e as { errorMessage?: string })?.errorMessage || (e as Error)?.message || e);
-      if (raw.includes("AUTH_KEY_DUPLICATED") && attempt < WAITS.length) {
-        log("warn", `تعارض جلسة (اتصال قديم ما زال مسجلاً لدى تيليجرام) — محاولة ${attempt + 1}/${WAITS.length + 1} بعد ${WAITS[attempt] / 1000} ثانية`);
-        await sleep(WAITS[attempt]);
+      if (raw.includes("AUTH_KEY_DUPLICATED")) {
+        // سلّم تصاعدي ثم دورة أبدية كل 30 دقيقة — لا استسلام (فترة تبريد تيليجرام متغيرة)
+        const wait = attempt < WAITS.length ? WAITS[attempt] : 1_800_000;
+        log("warn", `تعارض جلسة (فترة تبريد لدى تيليجرام) — إعادة المحاولة رقم ${attempt + 1} بعد ${wait / 1000} ثانية`);
+        await sleep(wait);
         continue;
       }
       log("error", `فشل استئناف الجلسة بعد كل المحاولات: ${errMsg(e)} — أعد تشغيل الخدمة أو سجّل الدخول من اللوحة`);
