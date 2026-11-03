@@ -112,19 +112,24 @@ export async function boot(): Promise<void> {
     log("info", "لا توجد جلسة محفوظة — بانتظار بيانات الدخول من اللوحة");
     return;
   }
-  try {
-    const session = new StringSession(readFileSync(SESSION_PATH, "utf8").trim());
-    client = new TelegramClient(session, creds.apiId, creds.apiHash, {
-      connectionRetries: 5,
-      retryDelay: 2000,
-      autoReconnect: true,
-    });
-    await client.connect();
-    if (await client.isUserAuthorized()) {
-      loginStep = "idle";
-      const me = (await client.getMe()) as Api.User;
-      log("success", `تم استئناف الجلسة: ${displayName(me)} (${creds.phone})`);
-    } else {
+  // AUTH_KEY_DUPLICATED: تيليجرام يرى اتصالاً قديماً بنفس الجلسة (نشر متزامن / إعادة تحميل)
+  // نعيد المحاولة بتراجع تصاعدي — الخادم يترك الاتصال الميت خلال دقائق
+  const WAITS = [30_000, 60_000, 120_000, 180_000, 300_000, 300_000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const session = new StringSession(readFileSync(SESSION_PATH, "utf8").trim());
+      client = new TelegramClient(session, creds.apiId, creds.apiHash, {
+        connectionRetries: 5,
+        retryDelay: 2000,
+        autoReconnect: true,
+      });
+      await client.connect();
+      if (await client.isUserAuthorized()) {
+        loginStep = "idle";
+        const me = (await client.getMe()) as Api.User;
+        log("success", `تم استئناف الجلسة: ${displayName(me)} (${creds.phone})`);
+        return;
+      }
       log("warn", "الجلسة المحفوظة غير صالحة — أعد تسجيل الدخول من اللوحة");
       client = null;
       try {
@@ -132,10 +137,23 @@ export async function boot(): Promise<void> {
       } catch {
         /* ignore */
       }
+      return;
+    } catch (e) {
+      try {
+        if (client) await client.disconnect();
+      } catch {
+        /* ignore */
+      }
+      client = null;
+      const raw = String((e as { errorMessage?: string })?.errorMessage || (e as Error)?.message || e);
+      if (raw.includes("AUTH_KEY_DUPLICATED") && attempt < WAITS.length) {
+        log("warn", `تعارض جلسة (اتصال قديم ما زال مسجلاً لدى تيليجرام) — محاولة ${attempt + 1}/${WAITS.length + 1} بعد ${WAITS[attempt] / 1000} ثانية`);
+        await sleep(WAITS[attempt]);
+        continue;
+      }
+      log("error", `فشل استئناف الجلسة: ${errMsg(e)}`);
+      return;
     }
-  } catch (e) {
-    client = null;
-    log("error", `فشل استئناف الجلسة: ${errMsg(e)}`);
   }
 }
 
