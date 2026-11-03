@@ -1,0 +1,13 @@
+{
+  "name": "tg-rashq",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "big-integer": "^1.6.52",
+    "telegram": "^2.26.22"
+  }
+}

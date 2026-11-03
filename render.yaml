@@ -1,0 +1,35 @@
+# Blueprint للنشر على Render — راجع README.md للشرح الكامل
+services:
+  - type: web
+    name: um-raham-bot
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/health
+    envVars:
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: PHONE
+        sync: false
+      - key: SESSION_STRING
+        sync: false
+      - key: WA_NUMBER
+        sync: false
+      - key: TARGET_PEER
+        sync: false
+      - key: TARGET_ID
+        sync: false
+      - key: TARGET_ACCESS_HASH
+        sync: false
+      - key: TARGET_TITLE
+        sync: false
+      - key: POSTER_ON
+        sync: false
+      - key: POSTER_INTERVAL_MIN
+        sync: false
+      - key: POSTER_INTERVAL_MAX
+        sync: false
+      - key: POSTER_DAILY_LIMIT
+        sync: false
