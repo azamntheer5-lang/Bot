@@ -153,9 +153,17 @@ export async function boot(): Promise<void> {
     }
   }
   // AUTH_KEY_DUPLICATED: تيليجرام يرى اتصالاً قديماً بنفس الجلسة (نشر متزامن / إعادة تحميل)
-  // نعيد المحاولة بتراجع تصاعدي — الخادم يترك الاتصال الميت خلال دقائق
-  const WAITS = [30_000, 60_000, 120_000, 180_000, 300_000, 300_000];
+  // نعيد المحاولة بتراجع تصاعدي طويل (~100 دقيقة) — الخادم يترك الحجب خلالها
+  const WAITS = [30_000, 60_000, 120_000, 300_000, 300_000, 600_000, 600_000, 900_000, 900_000, 1_200_000, 1_800_000];
   for (let attempt = 0; ; attempt++) {
+    // حارسة: لو عاد الاتصال عبر مسار آخر (تسجيل دخول جديد من اللوحة) — نوقف السلّم
+    if (client && client.connected) {
+      try {
+        if (await client.isUserAuthorized()) return;
+      } catch {
+        /* تجاهل */
+      }
+    }
     try {
       const session = new StringSession(readFileSync(SESSION_PATH, "utf8").trim());
       const c = new TelegramClient(session, creds.apiId, creds.apiHash, {
@@ -187,7 +195,7 @@ export async function boot(): Promise<void> {
         await sleep(WAITS[attempt]);
         continue;
       }
-      log("error", `فشل استئناف الجلسة: ${errMsg(e)}`);
+      log("error", `فشل استئناف الجلسة بعد كل المحاولات: ${errMsg(e)} — أعد تشغيل الخدمة أو سجّل الدخول من اللوحة`);
       return;
     }
   }
