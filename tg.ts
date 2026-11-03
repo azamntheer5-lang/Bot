@@ -28,7 +28,33 @@ export interface TargetInfo {
 }
 
 let creds: Creds | null = null;
-let client: TelegramClient | null = null;
+// عميل واحد على مستوى العملية (globalThis) — ينجو من إعادة التحميل الساخن (bun --hot)
+// حتى لا يُنشأ عميل موازٍ بنفس الجلسة فيحدث تعارض AUTH_KEY_DUPLICATED
+const G = globalThis as typeof globalThis & { __tgClient?: TelegramClient | null };
+
+let client: TelegramClient | null = G.__tgClient ?? null;
+
+function setClient(c: TelegramClient | null): void {
+  client = c;
+  G.__tgClient = c;
+}
+
+/** إغلاق قاطع للعميل — يغلق السوكيت وكل الحلقات الداخلية (destroy أقوى من disconnect) */
+async function killClient(): Promise<void> {
+  const c = client;
+  if (!c) return;
+  try {
+    await c.disconnect();
+  } catch {
+    /* ignore */
+  }
+  try {
+    await c.destroy();
+  } catch {
+    /* ignore */
+  }
+  setClient(null);
+}
 let pending: { phoneCodeHash: string; phone: string; viaApp: boolean } | null = null;
 let loginStep: "idle" | "code_sent" | "need_password" = "idle";
 
@@ -112,26 +138,41 @@ export async function boot(): Promise<void> {
     log("info", "لا توجد جلسة محفوظة — بانتظار بيانات الدخول من اللوحة");
     return;
   }
+  // إعادة تحميل ساخنة: العميل القديم ما زال حياً ومتصلاً — نعيد استخدامه مباشرة بلا اتصال جديد
+  if (client && client.connected) {
+    try {
+      if (await client.isUserAuthorized()) {
+        loginStep = "idle";
+        const me = (await client.getMe()) as Api.User;
+        log("success", `الجلسة حية عبر إعادة التحميل: ${displayName(me)} (${creds.phone})`);
+        return;
+      }
+    } catch {
+      /* العميل القديم غير صالح — نستمر بمحاولة اتصال نظيف */
+      await killClient();
+    }
+  }
   // AUTH_KEY_DUPLICATED: تيليجرام يرى اتصالاً قديماً بنفس الجلسة (نشر متزامن / إعادة تحميل)
   // نعيد المحاولة بتراجع تصاعدي — الخادم يترك الاتصال الميت خلال دقائق
   const WAITS = [30_000, 60_000, 120_000, 180_000, 300_000, 300_000];
   for (let attempt = 0; ; attempt++) {
     try {
       const session = new StringSession(readFileSync(SESSION_PATH, "utf8").trim());
-      client = new TelegramClient(session, creds.apiId, creds.apiHash, {
+      const c = new TelegramClient(session, creds.apiId, creds.apiHash, {
         connectionRetries: 5,
         retryDelay: 2000,
         autoReconnect: true,
       });
-      await client.connect();
-      if (await client.isUserAuthorized()) {
+      setClient(c);
+      await c.connect();
+      if (await c.isUserAuthorized()) {
         loginStep = "idle";
         const me = (await client.getMe()) as Api.User;
         log("success", `تم استئناف الجلسة: ${displayName(me)} (${creds.phone})`);
         return;
       }
       log("warn", "الجلسة المحفوظة غير صالحة — أعد تسجيل الدخول من اللوحة");
-      client = null;
+      await killClient();
       try {
         unlinkSync(SESSION_PATH);
       } catch {
@@ -139,12 +180,7 @@ export async function boot(): Promise<void> {
       }
       return;
     } catch (e) {
-      try {
-        if (client) await client.disconnect();
-      } catch {
-        /* ignore */
-      }
-      client = null;
+      await killClient();
       const raw = String((e as { errorMessage?: string })?.errorMessage || (e as Error)?.message || e);
       if (raw.includes("AUTH_KEY_DUPLICATED") && attempt < WAITS.length) {
         log("warn", `تعارض جلسة (اتصال قديم ما زال مسجلاً لدى تيليجرام) — محاولة ${attempt + 1}/${WAITS.length + 1} بعد ${WAITS[attempt] / 1000} ثانية`);
@@ -186,20 +222,17 @@ export async function authStart(input: { apiId: number; apiHash: string; phone: 
   }
   // قطع أي عميل سابق معلق
   if (client) {
-    try {
-      await client.disconnect();
-    } catch {
-      /* ignore */
-    }
-    client = null;
+    await killClient();
   }
   creds = { apiId: input.apiId, apiHash: input.apiHash, phone: input.phone };
   saveCreds();
 
-  client = new TelegramClient(new StringSession(""), creds.apiId, creds.apiHash, {
-    connectionRetries: 3,
-    retryDelay: 1500,
-  });
+  setClient(
+    new TelegramClient(new StringSession(""), creds.apiId, creds.apiHash, {
+      connectionRetries: 3,
+      retryDelay: 1500,
+    })
+  );
   await client.connect();
   const sent = await client.sendCode({ apiId: creds.apiId, apiHash: creds.apiHash }, creds.phone);
   pending = { phoneCodeHash: sent.phoneCodeHash, phone: creds.phone, viaApp: sent.isCodeViaApp };
@@ -267,12 +300,11 @@ export async function authLogout(): Promise<void> {
       if (await client.isUserAuthorized()) {
         await client.invoke(new Api.auth.LogOut());
       }
-      await client.disconnect();
     } catch {
       /* ignore */
     }
+    await killClient();
   }
-  client = null;
   pending = null;
   loginStep = "idle";
   try {
